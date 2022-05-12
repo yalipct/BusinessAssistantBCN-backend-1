@@ -5,17 +5,15 @@ import com.businessassistantbcn.opendata.dto.ActivityInfoDto;
 import com.businessassistantbcn.opendata.dto.GenericResultDto;
 import com.businessassistantbcn.opendata.dto.input.largeestablishments.ClassificationDataDto;
 import com.businessassistantbcn.opendata.dto.input.largeestablishments.LargeEstablishmentsDto;
-import com.businessassistantbcn.opendata.dto.output.LargeEstablishmentsResponseDto;
 import com.businessassistantbcn.opendata.exception.OpendataUnavailableServiceException;
 import com.businessassistantbcn.opendata.helper.JsonHelper;
 import com.businessassistantbcn.opendata.proxy.HttpProxy;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
-import lombok.extern.slf4j.Slf4j;
-
-import org.modelmapper.ModelMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -25,30 +23,28 @@ import java.util.List;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
-@Slf4j
 @Service
 public class LargeEstablishmentsService {
-	
+	private static final Logger log = LoggerFactory.getLogger(LargeEstablishmentsService.class);
+
 	@Autowired
 	private HttpProxy httpProxy;
 	@Autowired
 	private PropertiesConfig config;
 	@Autowired
-	private ModelMapper modelMapper;
-	@Autowired
-	private GenericResultDto<LargeEstablishmentsResponseDto> genericResultDto;
+	private GenericResultDto<LargeEstablishmentsDto> genericResultDto;
 	@Autowired
 	private GenericResultDto<ActivityInfoDto> genericActivityResultDto;
 
 	// Get paged results
 	@CircuitBreaker(name = "circuitBreaker", fallbackMethod = "logInternalErrorReturnLargeEstablishmentsDefaultPage")
-	public Mono<GenericResultDto<LargeEstablishmentsResponseDto>> getPage(int offset, int limit) throws MalformedURLException {
+	public Mono<GenericResultDto<LargeEstablishmentsDto>> getPage(int offset, int limit) throws MalformedURLException {
 		return getResultDto(offset, limit, dto -> true);
 	}
 	
 	// Get paged results filtered by district
 	@CircuitBreaker(name = "circuitBreaker", fallbackMethod = "logInternalErrorReturnLargeEstablishmentsDefaultPage")
-	public Mono<GenericResultDto<LargeEstablishmentsResponseDto>> getPageByDistrict(int offset, int limit, int district)
+	public Mono<GenericResultDto<LargeEstablishmentsDto>> getPageByDistrict(int offset, int limit, int district)
 		throws MalformedURLException {
 		return getResultDto(offset, limit, dto ->
 			dto.getAddresses().stream().anyMatch(a ->
@@ -58,7 +54,7 @@ public class LargeEstablishmentsService {
 	
 	// Get paged results filtered by activity
 	@CircuitBreaker(name = "circuitBreaker", fallbackMethod = "logInternalErrorReturnLargeEstablishmentsDefaultPage")
-	public Mono<GenericResultDto<LargeEstablishmentsResponseDto>> getPageByActivity(int offset, int limit, String activityId)
+	public Mono<GenericResultDto<LargeEstablishmentsDto>> getPageByActivity(int offset, int limit, String activityId)
 		throws MalformedURLException {
 	
 		Predicate<LargeEstablishmentsDto> dtoFilter = largeEstablishmentsDto -> 
@@ -69,7 +65,7 @@ public class LargeEstablishmentsService {
 		return getResultDto(offset, limit, dtoFilter);
 	}
 
-	private Mono<GenericResultDto<LargeEstablishmentsResponseDto>> getResultDto(
+	private Mono<GenericResultDto<LargeEstablishmentsDto>> getResultDto(
 		int offset, int limit, Predicate<LargeEstablishmentsDto> dtoFilter) throws MalformedURLException {
 		return 	httpProxy.getRequestData(new URL(config.getDs_largeestablishments()), LargeEstablishmentsDto[].class)
 			.flatMap(largeEstablishmentsDto -> {
@@ -81,8 +77,7 @@ public class LargeEstablishmentsService {
 			LargeEstablishmentsDto[] pagedDto = JsonHelper
 				.filterDto(filteredDto, offset, limit);
 
-			LargeEstablishmentsResponseDto[] responseDto = Arrays.stream(pagedDto).map(p -> mapToResponseDto(p)).toArray(LargeEstablishmentsResponseDto[]::new);
-			genericResultDto.setInfo(offset, limit, responseDto.length, responseDto);
+			genericResultDto.setInfo(offset, limit, filteredDto.length, pagedDto);
 			return Mono.just(genericResultDto);
 		})
 		.onErrorResume(e -> this.getLargeEstablishmentsDefaultPage(new OpendataUnavailableServiceException()));
@@ -94,26 +89,19 @@ public class LargeEstablishmentsService {
 		largeEstablishmentDto.setClassifications_data(classData);
 		return largeEstablishmentDto;
 	}
-	
-	private LargeEstablishmentsResponseDto mapToResponseDto(LargeEstablishmentsDto largeEstablishmentsDto) {
-		LargeEstablishmentsResponseDto responseDto = modelMapper.map(largeEstablishmentsDto, LargeEstablishmentsResponseDto.class);
-		responseDto.setValue(largeEstablishmentsDto.getValues());
-		responseDto.setActivities(responseDto.mapClassificationDataListToActivityInfoList(largeEstablishmentsDto.getClassifications_data()));
-	    return responseDto;
-	}
 
-	private Mono<GenericResultDto<LargeEstablishmentsResponseDto>> logServerErrorReturnLargeEstablishmentsDefaultPage(Throwable exception) {
+	private Mono<GenericResultDto<LargeEstablishmentsDto>> logServerErrorReturnLargeEstablishmentsDefaultPage(Throwable exception) {
 		log.error("Opendata is down");
 		return this.getLargeEstablishmentsDefaultPage(exception);
 	}
 
-	private Mono<GenericResultDto<LargeEstablishmentsResponseDto>> logInternalErrorReturnLargeEstablishmentsDefaultPage(Throwable exception) {
+	private Mono<GenericResultDto<LargeEstablishmentsDto>> logInternalErrorReturnLargeEstablishmentsDefaultPage(Throwable exception) {
 		log.error("BusinessAssistant error: "+exception.getMessage());
 		return this.getLargeEstablishmentsDefaultPage(exception);
 	}
 
-	private Mono<GenericResultDto<LargeEstablishmentsResponseDto>> getLargeEstablishmentsDefaultPage(Throwable exception) {
-		genericResultDto.setInfo(0, 0, 0, new LargeEstablishmentsResponseDto[0]);
+	private Mono<GenericResultDto<LargeEstablishmentsDto>> getLargeEstablishmentsDefaultPage(Throwable exception) {
+		genericResultDto.setInfo(0, 0, 0, new LargeEstablishmentsDto[0]);
 		return Mono.just(genericResultDto);
 	}
 
